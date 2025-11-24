@@ -404,12 +404,18 @@ export class MemStorage implements IStorage {
 }
 
 import { DbStorage } from "./db-storage";
+import { SupabaseStorage } from "./supabase-storage";
 
 // Inicializar storage baseado em variável de ambiente
 function initializeStorage() {
   const databaseUrl = process.env.DATABASE_URL;
+  const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
   
-  if (databaseUrl && databaseUrl.trim() !== "") {
+  // Priorizar Supabase se disponível
+  if (supabaseUrl && supabaseUrl.includes('supabase.co')) {
+    console.log("🚀 Usando SupabaseStorage (Supabase)");
+    return new SupabaseStorage();
+  } else if (databaseUrl && databaseUrl.trim() !== "") {
     console.log("🗄️  Usando DbStorage (PostgreSQL)");
     return new DbStorage(databaseUrl);
   } else {

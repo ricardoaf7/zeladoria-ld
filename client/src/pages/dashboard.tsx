@@ -10,10 +10,12 @@ import { NewAreaModal } from "@/components/NewAreaModal";
 import { EditAreaModal } from "@/components/EditAreaModal";
 import { MapHeaderBar } from "@/components/MapHeaderBar";
 import { ExportDialog } from "@/components/ExportDialog";
+import { ServiceModuleWrapper } from "@/components/ServiceModuleWrapper";
 import { SidebarProvider, SidebarTrigger, SidebarInset } from "@/components/ui/sidebar";
 import { BottomSheet, type BottomSheetState } from "@/components/BottomSheet";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useQuery } from "@tanstack/react-query";
+import { useServiceModule } from "@/hooks/useServiceModule";
 import type { ServiceArea, AppConfig } from "@shared/schema";
 import type { FilterCriteria } from "@/components/FilterPanel";
 import type { TimeRangeFilter } from "@/components/MapLegend";
@@ -25,43 +27,39 @@ import L from "leaflet";
 export default function Dashboard() {
   const isMobile = useIsMobile();
   const { toast } = useToast();
-  const [selectedArea, setSelectedArea] = useState<ServiceArea | null>(null);
-  const [showMapCard, setShowMapCard] = useState(false);
-  const [showQuickRegisterModal, setShowQuickRegisterModal] = useState(false);
-  const [showJardinsRegisterModal, setShowJardinsRegisterModal] = useState(false);
-  const [showManualForecastModal, setShowManualForecastModal] = useState(false);
-  const [showNewAreaModal, setShowNewAreaModal] = useState(false);
-  const [showEditModal, setShowEditModal] = useState(false);
-  const [newAreaCoords, setNewAreaCoords] = useState<{ lat: number; lng: number } | null>(null);
   const [selectedService, setSelectedService] = useState<string>('');
-  const [bottomSheetState, setBottomSheetState] = useState<BottomSheetState>("minimized");
-  const [filters, setFilters] = useState<FilterCriteria>({
-    search: "",
-    bairro: "all",
-    lote: "all",
-    status: "all",
-    tipo: "all",
-  });
-  const [timeRangeFilter, setTimeRangeFilter] = useState<TimeRangeFilter>(null);
-  const [customFilterDateRange, setCustomFilterDateRange] = useState<{ from: Date | undefined; to: Date | undefined }>({ from: undefined, to: undefined });
   const [showExportDialog, setShowExportDialog] = useState(false);
   const mapRef = useRef<L.Map | null>(null);
-  const ignoreSearchClearRef = useRef(false); // Flag para ignorar limpeza após seleção
+  
+  // Hook de módulo para gerenciar estado isolado por serviço
+  const serviceModule = useServiceModule(selectedService);
+  const { moduleState, handleServiceChange, handleAreaSelect, handleCloseMapCard, 
+          handleOpenQuickRegister, handleOpenJardinsRegister, handleOpenManualForecast, 
+          handleOpenEdit, handleMapClick, handleAreaUpdate, 
+          handleFilterChange, handleBottomSheetStateChange, handleModalClose } = serviceModule;
+  
+  // Flag para controlar limpeza de busca
+  const ignoreSearchClearRef = useRef(false);
 
   // Limpar selectedArea quando busca é limpa MANUALMENTE (não após seleção)
   useEffect(() => {
-    if (filters.search === '') {
+    if (moduleState.filters.search === '') {
       // Ignorar se foi uma limpeza após seleção de área
       if (ignoreSearchClearRef.current) {
         ignoreSearchClearRef.current = false;
         return;
       }
-      setSelectedArea(null);
-      setShowMapCard(false);
+      handleAreaSelect(null);
     }
-  }, [filters.search]);
+  }, [moduleState.filters.search, handleAreaSelect]);
 
   const handleServiceSelect = (service: string) => {
+    // 🚨 IMPLEMENTAÇÃO DA REGRA DE ISOLAMENTO DE MÓDULOS
+    if (selectedService && selectedService !== service) {
+      // Limpar estado do serviço anterior antes de mudar
+      serviceModule.resetModule();
+    }
+    
     setSelectedService(service);
     // No mobile, não abrir automaticamente o BottomSheet
     // Deixar o usuário controlar via botão Menu
@@ -123,9 +121,9 @@ export default function Dashboard() {
   // OTIMIZAÇÃO CRÍTICA: Usar useDeferredValue para separar atualização urgente (input)
   // de computação pesada (filtros). Evita lag de 3-4 segundos na digitação.
   // React prioriza atualização do input e processa filtros depois
-  const deferredFilters = useDeferredValue(filters);
-  const deferredTimeRangeFilter = useDeferredValue(timeRangeFilter);
-  const deferredCustomFilterDateRange = useDeferredValue(customFilterDateRange);
+  const deferredFilters = useDeferredValue(moduleState.filters);
+  const deferredTimeRangeFilter = useDeferredValue(moduleState.timeRangeFilter);
+  const deferredCustomFilterDateRange = useDeferredValue(moduleState.customFilterDateRange);
 
   // Função auxiliar para calcular dias DESDE última roçagem
   const getDaysSinceLastMowing = (area: ServiceArea): number => {
@@ -221,17 +219,17 @@ export default function Dashboard() {
     });
   }, [rocagemAreas, deferredFilters, deferredTimeRangeFilter, deferredCustomFilterDateRange]);
 
-  const hasActiveFilters = filters.search || 
-    (filters.bairro && filters.bairro !== "all") || 
-    (filters.lote && filters.lote !== "all") || 
-    (filters.status && filters.status !== "all") || 
-    (filters.tipo && filters.tipo !== "all") ||
-    timeRangeFilter !== null;
+  const hasActiveFilters = moduleState.filters.search || 
+    (moduleState.filters.bairro && moduleState.filters.bairro !== "all") || 
+    (moduleState.filters.lote && moduleState.filters.lote !== "all") || 
+    (moduleState.filters.status && moduleState.filters.status !== "all") || 
+    (moduleState.filters.tipo && moduleState.filters.tipo !== "all") ||
+    moduleState.timeRangeFilter !== null;
 
   useEffect(() => {
-    if (selectedArea && mapRef.current) {
-      const lat = selectedArea.lat;
-      const lng = selectedArea.lng;
+    if (moduleState.selectedArea && mapRef.current) {
+      const lat = moduleState.selectedArea.lat;
+      const lng = moduleState.selectedArea.lng;
       
       // Validar coordenadas antes de fazer zoom
       if (
@@ -247,10 +245,10 @@ export default function Dashboard() {
         // Sempre aproximar ao clicar em uma área (zoom 17 para boa visualização)
         mapRef.current.setView([lat, lng], 17, { animate: true });
       } else {
-        console.warn('Coordenadas inválidas para área:', selectedArea.id, { lat, lng });
+        console.warn('Coordenadas inválidas para área:', moduleState.selectedArea.id, { lat, lng });
       }
     }
-  }, [selectedArea]);
+  }, [moduleState.selectedArea]);
 
   // Largura responsiva: 85% em mobile, 21rem em desktop
   const style = {
@@ -258,50 +256,11 @@ export default function Dashboard() {
     "--sidebar-width-icon": "4rem",
   } as React.CSSProperties;
 
-  const handleAreaClick = (area: ServiceArea) => {
-    setSelectedArea(area);
-    setShowMapCard(true); // Mostrar card flutuante no mapa
-  };
+  // Handlers agora usam o hook de módulo (já definidos acima)
+  // Removidos pois agora são providos pelo useServiceModule
 
-  const handleCloseMapCard = () => {
-    setShowMapCard(false);
-    setSelectedArea(null);
-  };
-
-  const handleOpenQuickRegister = () => {
-    setShowMapCard(false);
-    setShowQuickRegisterModal(true);
-  };
-
-  const handleOpenJardinsRegister = () => {
-    setShowMapCard(false);
-    setShowJardinsRegisterModal(true);
-  };
-
-  const handleOpenManualForecast = () => {
-    setShowMapCard(false);
-    setShowManualForecastModal(true);
-  };
-
-  const handleOpenEdit = () => {
-    setShowMapCard(false);
-    setShowEditModal(true);
-  };
-
-  const handleMapClick = (lat: number, lng: number) => {
-    setNewAreaCoords({ lat, lng });
-    setShowNewAreaModal(true);
-  };
-
-  const handleAreaUpdate = (updatedArea: ServiceArea) => {
-    setSelectedArea(updatedArea);
-  };
-
-  const handleTimeRangeFilterChange = (filter: TimeRangeFilter, customDateRange?: { from: Date | undefined; to: Date | undefined }) => {
-    setTimeRangeFilter(filter);
-    // Sempre atualizar customFilterDateRange (undefined para filtros não-custom)
-    setCustomFilterDateRange(customDateRange || { from: undefined, to: undefined });
-  };
+  // Handlers do módulo (já desestruturados acima)
+  const handleTimeRangeFilterChange = serviceModule.handleTimeRangeFilterChange;
 
   const handleAreaSelectFromSearch = (area: ServiceArea) => {
     // Centralizar mapa na área
@@ -309,26 +268,25 @@ export default function Dashboard() {
       mapRef.current.setView([area.lat, area.lng], 17, { animate: true });
     }
     
-    // Selecionar área e abrir MapInfoCard
-    setSelectedArea(area);
-    setShowMapCard(true);
+    // Selecionar área e abrir MapInfoCard usando hook de módulo
+    serviceModule.handleAreaSelect(area);
     
     // Setar flag para ignorar próxima limpeza de search
     ignoreSearchClearRef.current = true;
     
     // No mobile, minimizar o BottomSheet para ver melhor
     if (isMobile) {
-      setBottomSheetState("minimized");
+      serviceModule.handleBottomSheetStateChange("minimized");
     }
   };
 
   // Mobile layout com BottomSheet
   if (isMobile) {
     const toggleBottomSheet = () => {
-      if (bottomSheetState === "minimized") {
-        setBottomSheetState("medium");
+      if (moduleState.bottomSheetState === "minimized") {
+        serviceModule.handleBottomSheetStateChange("medium");
       } else {
-        setBottomSheetState("minimized");
+        serviceModule.handleBottomSheetStateChange("minimized");
       }
     };
 
@@ -339,11 +297,11 @@ export default function Dashboard() {
             variant="ghost"
             size="icon"
             onClick={toggleBottomSheet}
-            className={bottomSheetState !== "minimized" ? "toggle-elevate toggle-elevated" : ""}
-            aria-label={bottomSheetState === "minimized" ? "Abrir menu" : "Fechar menu"}
+            className={moduleState.bottomSheetState !== "minimized" ? "toggle-elevate toggle-elevated" : ""}
+            aria-label={moduleState.bottomSheetState === "minimized" ? "Abrir menu" : "Fechar menu"}
             data-testid="button-mobile-menu"
           >
-            {bottomSheetState === "minimized" ? (
+            {moduleState.bottomSheetState === "minimized" ? (
               <Menu className="h-5 w-5" />
             ) : (
               <X className="h-5 w-5" />
@@ -373,23 +331,22 @@ export default function Dashboard() {
           </div>
         </header>
 
-        {/* Barra de busca e filtros - aparece só quando serviço selecionado */}
+        {/* Barra de busca e filtros - ISOLADO POR SERVIÇO */}
         {selectedService === 'rocagem' && (
-          <MapHeaderBar
-            searchQuery={filters.search}
-            onSearchChange={(query) => setFilters({ ...filters, search: query })}
-            activeFilter={timeRangeFilter}
-            onFilterChange={handleTimeRangeFilterChange}
-            filteredCount={filteredRocagemAreas.length}
-            totalCount={rocagemAreas.length}
-            areas={filteredRocagemAreas}
-            onAreaSelect={handleAreaSelectFromSearch}
-            selectedAreaId={selectedArea?.id ?? null}
-            onClearSelection={() => {
-              setSelectedArea(null);
-              setShowMapCard(false);
-            }}
-          />
+          <ServiceModuleWrapper service="rocagem" onServiceChange={() => serviceModule.resetModule()}>
+            <MapHeaderBar
+              searchQuery={moduleState.filters.search}
+              onSearchChange={(query) => serviceModule.handleFilterChange({ ...moduleState.filters, search: query })}
+              activeFilter={moduleState.timeRangeFilter}
+              onFilterChange={handleTimeRangeFilterChange}
+              filteredCount={filteredRocagemAreas.length}
+              totalCount={rocagemAreas.length}
+              areas={filteredRocagemAreas}
+              onAreaSelect={handleAreaSelectFromSearch}
+              selectedAreaId={moduleState.selectedArea?.id ?? null}
+              onClearSelection={() => serviceModule.handleAreaSelect(null)}
+            />
+          </ServiceModuleWrapper>
         )}
         
         <main className="flex-1 overflow-hidden relative">
@@ -401,75 +358,78 @@ export default function Dashboard() {
               rocagemLote2: selectedService === 'rocagem',
               jardins: selectedService === 'jardins',
             }}
-            onAreaClick={handleAreaClick}
+            onAreaClick={serviceModule.handleAreaSelect}
             onMapClick={handleMapClick}
             filteredAreaIds={hasActiveFilters ? new Set(filteredRocagemAreas.map(a => a.id)) : undefined}
             mapRef={mapRef}
-            searchQuery={filters.search}
-            activeFilter={timeRangeFilter}
-            selectedAreaId={selectedArea?.id || null}
+            searchQuery={moduleState.filters.search}
+            activeFilter={moduleState.timeRangeFilter}
+            selectedAreaId={moduleState.selectedArea?.id || null}
           />
 
-          {/* Card flutuante no mapa */}
-          {showMapCard && selectedArea && (
+          {/* Card flutuante no mapa - ISOLADO POR SERVIÇO */}
+          {moduleState.showMapCard && moduleState.selectedArea && (
             <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[1000] pointer-events-auto">
               <MapInfoCard
-                area={selectedArea}
-                onClose={handleCloseMapCard}
-                onRegisterMowing={handleOpenQuickRegister}
-                onRegisterJardins={handleOpenJardinsRegister}
-                onSetManualForecast={handleOpenManualForecast}
-                onEdit={handleOpenEdit}
+                area={moduleState.selectedArea}
+                onClose={serviceModule.handleCloseMapCard}
+                onRegisterMowing={serviceModule.handleOpenQuickRegister}
+                onRegisterJardins={serviceModule.handleOpenJardinsRegister}
+                onSetManualForecast={serviceModule.handleOpenManualForecast}
+                onEdit={serviceModule.handleOpenEdit}
               />
             </div>
           )}
           
           <BottomSheet 
-            state={bottomSheetState}
-            onStateChange={setBottomSheetState}
+            state={moduleState.bottomSheetState}
+            onStateChange={serviceModule.handleBottomSheetStateChange}
           >
             <AppSidebar
               standalone
               selectedService={selectedService}
               onServiceSelect={handleServiceSelect}
-              selectedArea={selectedArea}
-              onAreaClose={() => setSelectedArea(null)}
-              onAreaUpdate={handleAreaUpdate}
-              showQuickRegisterModal={showQuickRegisterModal}
-              showMapCard={showMapCard}
+              selectedArea={moduleState.selectedArea}
+              onAreaClose={() => serviceModule.handleAreaSelect(null)}
+              onAreaUpdate={serviceModule.handleAreaUpdate}
+              showQuickRegisterModal={moduleState.showQuickRegisterModal}
+              showMapCard={moduleState.showMapCard}
             />
           </BottomSheet>
 
-          {/* Modal de registro rápido */}
-          <QuickRegisterModal
-            area={selectedArea}
-            open={showQuickRegisterModal}
-            onOpenChange={setShowQuickRegisterModal}
-          />
-
-          {/* Modal de registro - Jardins */}
-          <JardinsRegisterModal
-            area={selectedArea}
-            open={showJardinsRegisterModal}
-            onOpenChange={setShowJardinsRegisterModal}
-          />
-
-          {/* Modal de cadastro de nova área */}
-          {newAreaCoords && (
-            <NewAreaModal
-              open={showNewAreaModal}
-              onOpenChange={setShowNewAreaModal}
-              lat={newAreaCoords.lat}
-              lng={newAreaCoords.lng}
+          {/* Modais - ISOLADOS POR SERVIÇO */}
+          {moduleState.showQuickRegisterModal && (
+            <QuickRegisterModal
+              area={moduleState.selectedArea}
+              open={moduleState.showQuickRegisterModal}
+              onOpenChange={() => serviceModule.handleModalClose('showQuickRegisterModal')}
             />
           )}
 
-          {/* Modal de edição de área */}
-          <EditAreaModal
-            area={selectedArea}
-            open={showEditModal}
-            onOpenChange={setShowEditModal}
-          />
+          {moduleState.showJardinsRegisterModal && (
+            <JardinsRegisterModal
+              area={moduleState.selectedArea}
+              open={moduleState.showJardinsRegisterModal}
+              onOpenChange={() => serviceModule.handleModalClose('showJardinsRegisterModal')}
+            />
+          )}
+
+          {moduleState.newAreaCoords && (
+            <NewAreaModal
+              open={moduleState.showNewAreaModal}
+              onOpenChange={() => serviceModule.handleModalClose('showNewAreaModal')}
+              lat={moduleState.newAreaCoords.lat}
+              lng={moduleState.newAreaCoords.lng}
+            />
+          )}
+
+          {moduleState.showEditModal && (
+            <EditAreaModal
+              area={moduleState.selectedArea}
+              open={moduleState.showEditModal}
+              onOpenChange={() => serviceModule.handleModalClose('showEditModal')}
+            />
+          )}
         </main>
       </div>
     );
@@ -485,11 +445,11 @@ export default function Dashboard() {
         <AppSidebar
           selectedService={selectedService}
           onServiceSelect={handleServiceSelect}
-          selectedArea={selectedArea}
-          onAreaClose={() => setSelectedArea(null)}
-          onAreaUpdate={handleAreaUpdate}
-          showQuickRegisterModal={showQuickRegisterModal}
-          showMapCard={showMapCard}
+          selectedArea={moduleState.selectedArea}
+          onAreaClose={() => serviceModule.handleAreaSelect(null)}
+          onAreaUpdate={serviceModule.handleAreaUpdate}
+          showQuickRegisterModal={moduleState.showQuickRegisterModal}
+          showMapCard={moduleState.showMapCard}
         />
         
         <SidebarInset className="flex-1 overflow-hidden flex flex-col">
@@ -518,23 +478,22 @@ export default function Dashboard() {
             </div>
           </header>
 
-          {/* Barra de busca e filtros - aparece só quando serviço selecionado */}
+          {/* Barra de busca e filtros - ISOLADO POR SERVIÇO */}
           {selectedService === 'rocagem' && (
-            <MapHeaderBar
-              searchQuery={filters.search}
-              onSearchChange={(query) => setFilters({ ...filters, search: query })}
-              activeFilter={timeRangeFilter}
-              onFilterChange={handleTimeRangeFilterChange}
-              filteredCount={filteredRocagemAreas.length}
-              totalCount={rocagemAreas.length}
-              areas={filteredRocagemAreas}
-              onAreaSelect={handleAreaSelectFromSearch}
-              selectedAreaId={selectedArea?.id ?? null}
-              onClearSelection={() => {
-                setSelectedArea(null);
-                setShowMapCard(false);
-              }}
-            />
+            <ServiceModuleWrapper service="rocagem" onServiceChange={() => serviceModule.resetModule()}>
+              <MapHeaderBar
+                searchQuery={moduleState.filters.search}
+                onSearchChange={(query) => serviceModule.handleFilterChange({ ...moduleState.filters, search: query })}
+                activeFilter={moduleState.timeRangeFilter}
+                onFilterChange={handleTimeRangeFilterChange}
+                filteredCount={filteredRocagemAreas.length}
+                totalCount={rocagemAreas.length}
+                areas={filteredRocagemAreas}
+                onAreaSelect={handleAreaSelectFromSearch}
+                selectedAreaId={moduleState.selectedArea?.id ?? null}
+                onClearSelection={() => serviceModule.handleAreaSelect(null)}
+              />
+            </ServiceModuleWrapper>
           )}
 
           <main className="flex-1 overflow-hidden relative">
@@ -546,25 +505,25 @@ export default function Dashboard() {
                 rocagemLote2: selectedService === 'rocagem',
                 jardins: selectedService === 'jardins',
               }}
-              onAreaClick={handleAreaClick}
-              onMapClick={handleMapClick}
+              onAreaClick={serviceModule.handleAreaSelect}
+              onMapClick={serviceModule.handleMapClick}
               filteredAreaIds={hasActiveFilters ? new Set(filteredRocagemAreas.map(a => a.id)) : undefined}
-              searchQuery={filters.search}
-              activeFilter={timeRangeFilter}
+              searchQuery={moduleState.filters.search}
+              activeFilter={moduleState.timeRangeFilter}
               mapRef={mapRef}
-              selectedAreaId={selectedArea?.id || null}
+              selectedAreaId={moduleState.selectedArea?.id || null}
             />
 
-            {/* Card flutuante no mapa */}
-            {showMapCard && selectedArea && (
+            {/* Card flutuante no mapa - ISOLADO POR SERVIÇO */}
+            {moduleState.showMapCard && moduleState.selectedArea && (
               <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[1000] pointer-events-auto">
                 <MapInfoCard
-                  area={selectedArea}
-                  onClose={handleCloseMapCard}
-                  onRegisterMowing={handleOpenQuickRegister}
-                  onRegisterJardins={handleOpenJardinsRegister}
-                  onSetManualForecast={handleOpenManualForecast}
-                  onEdit={handleOpenEdit}
+                  area={moduleState.selectedArea}
+                  onClose={serviceModule.handleCloseMapCard}
+                  onRegisterMowing={serviceModule.handleOpenQuickRegister}
+                  onRegisterJardins={serviceModule.handleOpenJardinsRegister}
+                  onSetManualForecast={serviceModule.handleOpenManualForecast}
+                  onEdit={serviceModule.handleOpenEdit}
                 />
               </div>
             )}
@@ -572,49 +531,53 @@ export default function Dashboard() {
         </SidebarInset>
       </div>
 
-      {/* Modal de registro rápido */}
-      <QuickRegisterModal
-        area={selectedArea}
-        open={showQuickRegisterModal}
-        onOpenChange={setShowQuickRegisterModal}
-      />
+      {/* Modais - ISOLADOS POR SERVIÇO */}
+      {moduleState.showQuickRegisterModal && (
+        <QuickRegisterModal
+          area={moduleState.selectedArea}
+          open={moduleState.showQuickRegisterModal}
+          onOpenChange={() => serviceModule.handleModalClose('showQuickRegisterModal')}
+        />
+      )}
 
-      {/* Modal de registro - Jardins */}
-      <JardinsRegisterModal
-        area={selectedArea}
-        open={showJardinsRegisterModal}
-        onOpenChange={setShowJardinsRegisterModal}
-      />
+      {moduleState.showJardinsRegisterModal && (
+        <JardinsRegisterModal
+          area={moduleState.selectedArea}
+          open={moduleState.showJardinsRegisterModal}
+          onOpenChange={() => serviceModule.handleModalClose('showJardinsRegisterModal')}
+        />
+      )}
 
-      {/* Modal de previsão manual */}
-      <ManualForecastModal
-        area={selectedArea}
-        open={showManualForecastModal}
-        onOpenChange={setShowManualForecastModal}
-      />
+      {moduleState.showManualForecastModal && (
+        <ManualForecastModal
+          area={moduleState.selectedArea}
+          open={moduleState.showManualForecastModal}
+          onOpenChange={() => serviceModule.handleModalClose('showManualForecastModal')}
+        />
+      )}
 
-      {/* Modal de exportação CSV */}
+      {/* Modal de exportação CSV - Global */}
       <ExportDialog
         open={showExportDialog}
         onOpenChange={setShowExportDialog}
       />
 
-      {/* Modal de cadastro de nova área */}
-      {newAreaCoords && (
+      {moduleState.newAreaCoords && (
         <NewAreaModal
-          open={showNewAreaModal}
-          onOpenChange={setShowNewAreaModal}
-          lat={newAreaCoords.lat}
-          lng={newAreaCoords.lng}
+          open={moduleState.showNewAreaModal}
+          onOpenChange={() => serviceModule.handleModalClose('showNewAreaModal')}
+          lat={moduleState.newAreaCoords.lat}
+          lng={moduleState.newAreaCoords.lng}
         />
       )}
 
-      {/* Modal de edição de área */}
-      <EditAreaModal
-        area={selectedArea}
-        open={showEditModal}
-        onOpenChange={setShowEditModal}
-      />
+      {moduleState.showEditModal && (
+        <EditAreaModal
+          area={moduleState.selectedArea}
+          open={moduleState.showEditModal}
+          onOpenChange={() => serviceModule.handleModalClose('showEditModal')}
+        />
+      )}
     </SidebarProvider>
   );
 }
